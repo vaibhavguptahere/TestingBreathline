@@ -1,13 +1,5 @@
 import { authenticateToken } from '@/middleware/auth';
-import MedicalRecord from '@/models/MedicalRecord';
-import User from '@/models/User';
-import AccessLog from '@/models/AccessLog';
-import connectDB from '@/lib/mongodb';
-
-// Rate limiting storage (in production, use Redis or database)
-const rateLimitStore = new Map();
-const DAILY_LIMIT = 50; // 50 requests per day per user
-const RESET_HOUR = 0; // Reset at midnight
+import { checkRateLimit, incrementUsage } from '../rate-limit/route.js';
 
 export async function POST(request) {
   try {
@@ -21,369 +13,340 @@ export async function POST(request) {
     const { message, context, patientId } = body;
 
     // Check rate limit
-    const rateLimitCheck = checkRateLimit(user._id);
-    if (!rateLimitCheck.allowed) {
+    const rateLimitCheck = checkRateLimit(user._id.toString());
+    if (rateLimitCheck.limitExceeded) {
       return Response.json({ 
-        error: `Daily limit exceeded. ${rateLimitCheck.remaining} requests remaining. Resets at midnight.`,
-        rateLimitExceeded: true,
-        remaining: rateLimitCheck.remaining,
-        resetTime: rateLimitCheck.resetTime
+        error: 'Daily AI request limit exceeded. Please try again tomorrow.',
+        rateLimitExceeded: true 
       }, { status: 429 });
     }
 
-    await connectDB();
+    // Simulate AI processing delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
 
-    let targetPatientId = patientId;
-    
-    // If user is a patient, use their own ID
-    if (user.role === 'patient') {
-      targetPatientId = user._id;
-    }
-    
-    // If user is a doctor, verify they have access to the patient
-    if (user.role === 'doctor' && patientId) {
-      const hasAccess = await MedicalRecord.findOne({
-        patientId: targetPatientId,
-        'accessPermissions.doctorId': user._id,
-        'accessPermissions.granted': true,
-      });
-      
-      if (!hasAccess) {
-        return Response.json({ error: 'Access denied to patient records' }, { status: 403 });
-      }
-    }
+    // Generate contextual AI response based on user role and message
+    const aiResponse = generateContextualResponse(message, context, user.role);
 
-    // Get patient context if available
-    let patientContext = null;
-    if (targetPatientId) {
-      const patient = await User.findById(targetPatientId).select('profile email');
-      const records = await MedicalRecord.find({ patientId: targetPatientId })
-        .sort({ createdAt: -1 })
-        .limit(10);
-      
-      patientContext = {
-        patient: patient,
-        recentRecords: records,
-        recordCount: records.length
-      };
-    }
-
-    // Generate AI response using OpenAI-style analysis
-    const aiResponse = await generateAIResponse(message, context, patientContext, user);
-
-    // Increment rate limit counter
-    incrementRateLimit(user._id);
-
-    // Log the AI chat interaction
-    if (targetPatientId) {
-      const accessLog = new AccessLog({
-        patientId: targetPatientId,
-        accessorId: user._id,
-        accessType: 'view',
-        accessReason: 'AI chat consultation',
-        ipAddress: request.headers.get('x-forwarded-for') || 'unknown',
-        userAgent: request.headers.get('user-agent') || 'unknown',
-      });
-      await accessLog.save();
-    }
+    // Increment usage
+    const updatedRateLimit = incrementUsage(user._id.toString());
 
     return Response.json({
       response: aiResponse,
+      rateLimitInfo: updatedRateLimit,
       timestamp: new Date().toISOString(),
-      rateLimitInfo: {
-        remaining: rateLimitCheck.remaining - 1,
-        resetTime: rateLimitCheck.resetTime
-      }
     });
   } catch (error) {
-    console.error('AI chat error:', error);
+    console.error('OpenAI chat error:', error);
     return Response.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
-function checkRateLimit(userId) {
-  const today = new Date().toDateString();
-  const userKey = `${userId}_${today}`;
+function generateContextualResponse(message, context, userRole) {
+  const lowerMessage = message.toLowerCase();
   
-  const userLimit = rateLimitStore.get(userKey) || { count: 0, date: today };
-  
-  // Reset if it's a new day
-  if (userLimit.date !== today) {
-    userLimit.count = 0;
-    userLimit.date = today;
-  }
-  
-  const remaining = DAILY_LIMIT - userLimit.count;
-  const resetTime = new Date();
-  resetTime.setHours(24, 0, 0, 0); // Next midnight
-  
-  return {
-    allowed: userLimit.count < DAILY_LIMIT,
-    remaining: Math.max(0, remaining),
-    resetTime: resetTime.toISOString()
-  };
-}
+  // Medical condition responses
+  if (lowerMessage.includes('headache')) {
+    return `Headaches can have various causes including tension, stress, dehydration, lack of sleep, or underlying medical conditions. For tension headaches, try:
 
-function incrementRateLimit(userId) {
-  const today = new Date().toDateString();
-  const userKey = `${userId}_${today}`;
-  
-  const userLimit = rateLimitStore.get(userKey) || { count: 0, date: today };
-  userLimit.count += 1;
-  userLimit.date = today;
-  
-  rateLimitStore.set(userKey, userLimit);
-}
+• Rest in a quiet, dark room
+• Apply a cold or warm compress to your head or neck
+• Stay hydrated
+• Practice relaxation techniques
+• Consider over-the-counter pain relievers if appropriate
 
-async function generateAIResponse(message, context, patientContext, user) {
-  const messageText = message.toLowerCase();
-  
-  // Analyze the message intent
-  const intent = analyzeMessageIntent(messageText);
-  
-  // Generate contextual response based on patient data
-  let response = '';
-  
-  switch (intent) {
-    case 'symptom_inquiry':
-      response = generateSymptomResponse(messageText, patientContext);
-      break;
-    case 'medication_question':
-      response = generateMedicationResponse(messageText, patientContext);
-      break;
-    case 'test_results':
-      response = generateTestResultsResponse(messageText, patientContext);
-      break;
-    case 'general_health':
-      response = generateGeneralHealthResponse(messageText, patientContext);
-      break;
-    case 'emergency_concern':
-      response = generateEmergencyResponse(messageText, patientContext);
-      break;
-    default:
-      response = generateDefaultResponse(messageText, patientContext, user);
-  }
-  
-  // Add disclaimer for medical advice
-  response += '\n\n⚠️ **Important**: This AI assistant provides general health information only. Always consult with healthcare professionals for medical advice, diagnosis, or treatment decisions.';
-  
-  return response;
-}
+Seek immediate medical attention if you experience:
+• Sudden, severe headache unlike any you've had before
+• Headache with fever, stiff neck, confusion, or vision changes
+• Headache after a head injury
+• Progressively worsening headaches
 
-function analyzeMessageIntent(message) {
-  if (message.includes('symptom') || message.includes('pain') || message.includes('feel') || 
-      message.includes('hurt') || message.includes('ache')) {
-    return 'symptom_inquiry';
+${userRole === 'patient' ? 'Always consult with your healthcare provider for persistent or concerning symptoms.' : 'Consider patient history and current medications when making treatment recommendations.'}`;
   }
-  
-  if (message.includes('medication') || message.includes('medicine') || message.includes('drug') ||
-      message.includes('pill') || message.includes('dose')) {
-    return 'medication_question';
-  }
-  
-  if (message.includes('test') || message.includes('result') || message.includes('lab') ||
-      message.includes('blood') || message.includes('scan')) {
-    return 'test_results';
-  }
-  
-  if (message.includes('emergency') || message.includes('urgent') || message.includes('severe') ||
-      message.includes('chest pain') || message.includes('can\'t breathe')) {
-    return 'emergency_concern';
-  }
-  
-  if (message.includes('health') || message.includes('wellness') || message.includes('prevention')) {
-    return 'general_health';
-  }
-  
-  return 'general_inquiry';
-}
 
-function generateSymptomResponse(message, patientContext) {
-  let response = "I understand you're asking about symptoms. ";
-  
-  if (patientContext && patientContext.recentRecords.length > 0) {
-    const recentSymptoms = extractSymptomsFromRecords(patientContext.recentRecords);
-    if (recentSymptoms.length > 0) {
-      response += `Based on your recent medical records, I see you've had: ${recentSymptoms.join(', ')}. `;
-    }
-  }
-  
-  if (message.includes('pain')) {
-    response += "For pain management, it's important to identify the location, intensity (1-10 scale), and any triggers. ";
-    response += "Over-the-counter pain relievers like acetaminophen or ibuprofen may help for mild pain, but ";
-  } else if (message.includes('fever')) {
-    response += "For fever, stay hydrated, rest, and monitor your temperature. Fever reducers can help with comfort. ";
-  } else if (message.includes('headache')) {
-    response += "Headaches can have various causes. Try resting in a quiet, dark room and staying hydrated. ";
-  }
-  
-  response += "However, if symptoms are severe, persistent, or concerning, please contact your healthcare provider or seek medical attention.";
-  
-  return response;
-}
+  if (lowerMessage.includes('chest pain')) {
+    return `Chest pain requires careful evaluation as it can range from minor issues to life-threatening conditions.
 
-function generateMedicationResponse(message, patientContext) {
-  let response = "Regarding medications, ";
-  
-  if (patientContext && patientContext.recentRecords.length > 0) {
-    const medications = extractMedicationsFromRecords(patientContext.recentRecords);
-    if (medications.length > 0) {
-      response += `I see from your records that you may be taking: ${medications.join(', ')}. `;
-    }
-  }
-  
-  if (message.includes('side effect')) {
-    response += "Side effects can vary by medication and individual. Common side effects are usually listed with your prescription. ";
-  } else if (message.includes('interaction')) {
-    response += "Drug interactions are important to consider. Always inform your healthcare providers about all medications you're taking. ";
-  } else if (message.includes('dose') || message.includes('dosage')) {
-    response += "Dosage should always follow your healthcare provider's instructions. Never adjust doses without consulting them first. ";
-  }
-  
-  response += "For specific medication questions, please consult your pharmacist or healthcare provider who can review your complete medication profile.";
-  
-  return response;
-}
+**Immediate medical attention needed if:**
+• Crushing, squeezing, or pressure-like chest pain
+• Pain radiating to arm, jaw, neck, or back
+• Shortness of breath
+• Sweating, nausea, or dizziness
+• Pain lasting more than a few minutes
 
-function generateTestResultsResponse(message, patientContext) {
-  let response = "Regarding test results, ";
-  
-  if (patientContext && patientContext.recentRecords.length > 0) {
-    const labRecords = patientContext.recentRecords.filter(r => r.category === 'lab-results');
-    if (labRecords.length > 0) {
-      response += `I see you have recent lab results from ${new Date(labRecords[0].createdAt).toLocaleDateString()}. `;
-    }
-  }
-  
-  if (message.includes('normal') || message.includes('abnormal')) {
-    response += "Test results should always be interpreted by your healthcare provider who can consider your complete medical picture. ";
-  } else if (message.includes('blood')) {
-    response += "Blood tests can provide valuable information about your health status. ";
-  }
-  
-  response += "Your healthcare provider is the best person to explain what your test results mean for your specific situation and health goals.";
-  
-  return response;
-}
+**Possible causes include:**
+• Heart-related: Angina, heart attack, pericarditis
+• Lung-related: Pneumonia, pulmonary embolism, pneumothorax
+• Digestive: GERD, esophageal spasm
+• Musculoskeletal: Muscle strain, rib injury
+• Anxiety or panic attacks
 
-function generateGeneralHealthResponse(message, patientContext) {
-  let response = "For general health and wellness, ";
-  
-  if (message.includes('prevention')) {
-    response += "Prevention is key to maintaining good health. This includes regular exercise, a balanced diet, adequate sleep, stress management, and routine medical check-ups. ";
-  } else if (message.includes('diet') || message.includes('nutrition')) {
-    response += "A balanced diet rich in fruits, vegetables, whole grains, and lean proteins supports overall health. ";
-  } else if (message.includes('exercise')) {
-    response += "Regular physical activity is important for cardiovascular health, muscle strength, and mental well-being. Aim for at least 150 minutes of moderate exercise per week. ";
-  } else if (message.includes('sleep')) {
-    response += "Quality sleep is essential for health. Most adults need 7-9 hours per night. Good sleep hygiene includes a consistent schedule and a comfortable environment. ";
+${userRole === 'doctor' ? 'Consider ECG, chest X-ray, and cardiac enzymes for evaluation. Risk stratification based on patient age, risk factors, and presentation is crucial.' : 'Do not delay seeking emergency care for chest pain - call 911 if symptoms are severe or concerning.'}`;
   }
-  
-  if (patientContext && patientContext.recordCount > 0) {
-    response += `Based on your ${patientContext.recordCount} medical records, maintaining regular communication with your healthcare team is important. `;
-  }
-  
-  response += "Consider discussing your health goals and concerns with your healthcare provider for personalized advice.";
-  
-  return response;
-}
 
-function generateEmergencyResponse(message, patientContext) {
-  let response = "🚨 **EMERGENCY CONCERN DETECTED** 🚨\n\n";
-  
-  if (message.includes('chest pain') || message.includes('heart')) {
-    response += "Chest pain can be serious and may indicate a heart attack or other cardiac emergency. ";
-  } else if (message.includes('breathe') || message.includes('breathing')) {
-    response += "Difficulty breathing can be a medical emergency. ";
-  } else if (message.includes('severe') && message.includes('pain')) {
-    response += "Severe pain may require immediate medical attention. ";
-  }
-  
-  response += "**SEEK IMMEDIATE MEDICAL ATTENTION:**\n";
-  response += "• Call 911 or go to the nearest emergency room\n";
-  response += "• Call your doctor immediately\n";
-  response += "• If you have emergency contacts, consider notifying them\n\n";
-  
-  if (patientContext && patientContext.patient && patientContext.patient.profile.emergencyContact) {
-    const contact = patientContext.patient.profile.emergencyContact;
-    response += `Your emergency contact: ${contact.name} (${contact.relationship}) - ${contact.phone}\n\n`;
-  }
-  
-  response += "Do not delay seeking professional medical help for emergency symptoms.";
-  
-  return response;
-}
+  if (lowerMessage.includes('fever')) {
+    return `Fever is your body's natural response to infection or illness. Normal body temperature is around 98.6°F (37°C).
 
-function generateDefaultResponse(message, patientContext, user) {
-  let response = `Hello! I'm your AI health assistant. `;
-  
-  if (user.role === 'patient') {
-    response += "I can help answer general health questions, provide information about symptoms, medications, and wellness tips. ";
-    
-    if (patientContext && patientContext.recordCount > 0) {
-      response += `I have access to your ${patientContext.recordCount} medical records to provide more personalized guidance. `;
-    }
-  } else if (user.role === 'doctor') {
-    response += "I can assist with clinical decision support, patient education materials, and general medical information. ";
-    
-    if (patientContext) {
-      response += `I can help analyze patient data and provide clinical insights based on available medical records. `;
-    }
+**Fever management:**
+• Stay hydrated with plenty of fluids
+• Rest and avoid strenuous activity
+• Dress lightly and keep room temperature comfortable
+• Consider fever reducers (acetaminophen, ibuprofen) if comfortable
+
+**Seek medical care if:**
+• Temperature above 103°F (39.4°C)
+• Fever persists more than 3 days
+• Accompanied by severe symptoms (difficulty breathing, chest pain, severe headache)
+• Signs of dehydration
+• In infants under 3 months: any fever warrants immediate medical attention
+
+**Red flags:**
+• Stiff neck with fever
+• Severe abdominal pain
+• Difficulty breathing
+• Confusion or altered mental state
+
+${userRole === 'doctor' ? 'Consider source of infection, patient age, immunocompromised status, and associated symptoms when determining treatment approach.' : 'Monitor symptoms closely and don\'t hesitate to seek medical care if concerned.'}`;
   }
-  
-  response += "\n\nI can help with:\n";
-  response += "• Symptom information and guidance\n";
-  response += "• Medication questions and interactions\n";
-  response += "• Test result interpretation\n";
-  response += "• General health and wellness advice\n";
-  response += "• Emergency guidance when needed\n\n";
-  
-  response += "What would you like to know about today?";
-  
-  return response;
-}
 
-function extractSymptomsFromRecords(records) {
-  const symptoms = new Set();
-  const symptomKeywords = [
-    'pain', 'fever', 'cough', 'headache', 'nausea', 'fatigue',
-    'dizziness', 'shortness of breath', 'chest pain', 'back pain'
-  ];
-  
-  records.forEach(record => {
-    const text = (record.title + ' ' + record.description).toLowerCase();
-    symptomKeywords.forEach(symptom => {
-      if (text.includes(symptom)) {
-        symptoms.add(symptom);
-      }
-    });
-  });
-  
-  return Array.from(symptoms).slice(0, 5);
-}
+  if (lowerMessage.includes('drug interaction') || lowerMessage.includes('medication')) {
+    return `Drug interactions can be serious and require careful monitoring. Common types include:
 
-function extractMedicationsFromRecords(records) {
-  const medications = new Set();
-  
-  records.forEach(record => {
-    if (record.category === 'prescription') {
-      const text = (record.title + ' ' + record.description).toLowerCase();
-      const medicationPatterns = [
-        /(\w+)\s*(\d+\s*mg)/gi,
-        /(\w+)\s*tablet/gi,
-        /(\w+)\s*capsule/gi,
-      ];
-      
-      medicationPatterns.forEach(pattern => {
-        const matches = [...text.matchAll(pattern)];
-        matches.forEach(match => {
-          if (match[1] && match[1].length > 3) {
-            medications.add(match[1].charAt(0).toUpperCase() + match[1].slice(1));
-          }
-        });
-      });
-    }
-  });
-  
-  return Array.from(medications).slice(0, 5);
+**Major interaction categories:**
+• Drug-drug interactions
+• Drug-food interactions
+• Drug-disease interactions
+• Drug-supplement interactions
+
+**High-risk combinations to be aware of:**
+• Warfarin with antibiotics, NSAIDs, or certain supplements
+• ACE inhibitors with potassium supplements
+• Statins with certain antibiotics or antifungals
+• MAO inhibitors with many medications and foods
+
+**Always inform healthcare providers about:**
+• All prescription medications
+• Over-the-counter drugs
+• Supplements and herbal products
+• Recreational substances
+
+${userRole === 'doctor' ? 'Use drug interaction checkers, consider pharmacokinetic and pharmacodynamic interactions, and monitor patients closely when starting new medications.' : 'Keep an updated list of all medications and supplements, and always check with your pharmacist or doctor before starting new medications.'}`;
+  }
+
+  if (lowerMessage.includes('hypertension') || lowerMessage.includes('blood pressure')) {
+    return `Hypertension (high blood pressure) is often called the "silent killer" because it typically has no symptoms.
+
+**Blood pressure categories:**
+• Normal: Less than 120/80 mmHg
+• Elevated: 120-129 systolic, less than 80 diastolic
+• Stage 1: 130-139/80-89 mmHg
+• Stage 2: 140/90 mmHg or higher
+• Crisis: Higher than 180/120 mmHg (seek immediate care)
+
+**Lifestyle modifications:**
+• DASH diet (rich in fruits, vegetables, whole grains)
+• Reduce sodium intake (less than 2,300mg daily)
+• Regular physical activity (150 minutes moderate exercise weekly)
+• Maintain healthy weight
+• Limit alcohol consumption
+• Quit smoking
+• Manage stress
+
+**Monitoring:**
+• Regular blood pressure checks
+• Home monitoring if recommended
+• Annual eye exams
+• Kidney function tests
+
+${userRole === 'doctor' ? 'Consider 10-year cardiovascular risk assessment, target BP goals based on patient factors, and stepped approach to antihypertensive therapy per current guidelines.' : 'Work with your healthcare team to develop a comprehensive management plan and monitor regularly.'}`;
+  }
+
+  if (lowerMessage.includes('diabetes')) {
+    return `Diabetes management requires a comprehensive approach focusing on blood sugar control and preventing complications.
+
+**Key management strategies:**
+• Blood glucose monitoring as recommended
+• Medication adherence (insulin, oral medications)
+• Carbohydrate counting and meal planning
+• Regular physical activity
+• Weight management
+
+**Target ranges (general guidelines):**
+• Fasting glucose: 80-130 mg/dL
+• Post-meal glucose: Less than 180 mg/dL
+• HbA1c: Less than 7% for most adults
+
+**Regular monitoring:**
+• HbA1c every 3-6 months
+• Annual eye exams
+• Foot exams
+• Kidney function tests
+• Lipid profiles
+• Blood pressure monitoring
+
+**Warning signs to watch for:**
+• Symptoms of high blood sugar (excessive thirst, frequent urination, fatigue)
+• Symptoms of low blood sugar (shakiness, sweating, confusion)
+• Foot problems or slow-healing wounds
+
+${userRole === 'doctor' ? 'Individualize HbA1c targets based on patient factors. Consider cardiovascular benefits of newer diabetes medications and screen regularly for complications.' : 'Work closely with your diabetes care team and don\'t hesitate to contact them with concerns about blood sugar control.'}`;
+  }
+
+  // General health and wellness responses
+  if (lowerMessage.includes('exercise') || lowerMessage.includes('physical activity')) {
+    return `Regular physical activity is one of the most important things you can do for your health.
+
+**Current recommendations:**
+• Adults: At least 150 minutes moderate-intensity aerobic activity weekly
+• Plus muscle-strengthening activities 2+ days per week
+• Or 75 minutes vigorous-intensity aerobic activity weekly
+
+**Benefits include:**
+• Improved cardiovascular health
+• Better weight management
+• Stronger bones and muscles
+• Reduced risk of chronic diseases
+• Better mental health and mood
+• Improved sleep quality
+
+**Getting started safely:**
+• Start slowly and gradually increase intensity
+• Choose activities you enjoy
+• Warm up before and cool down after exercise
+• Stay hydrated
+• Listen to your body
+
+**Consult healthcare provider before starting if you have:**
+• Heart disease or risk factors
+• Diabetes
+• Joint problems
+• Previous injuries
+
+${userRole === 'doctor' ? 'Consider exercise stress testing for high-risk patients and provide specific recommendations based on patient conditions and limitations.' : 'Find activities you enjoy to make exercise a sustainable part of your lifestyle.'}`;
+  }
+
+  if (lowerMessage.includes('sleep') || lowerMessage.includes('insomnia')) {
+    return `Good sleep hygiene is essential for physical and mental health. Most adults need 7-9 hours of sleep per night.
+
+**Sleep hygiene tips:**
+• Maintain consistent sleep schedule (same bedtime/wake time daily)
+• Create comfortable sleep environment (cool, dark, quiet)
+• Avoid screens 1 hour before bedtime
+• Limit caffeine, especially afternoon/evening
+• Avoid large meals, alcohol, and nicotine before bed
+• Regular daytime exercise (but not close to bedtime)
+
+**Relaxation techniques:**
+• Deep breathing exercises
+• Progressive muscle relaxation
+• Meditation or mindfulness
+• Reading or gentle stretching
+
+**When to seek help:**
+• Difficulty falling asleep or staying asleep for weeks
+• Daytime fatigue affecting daily activities
+• Loud snoring or breathing interruptions during sleep
+• Restless legs or other sleep disturbances
+
+${userRole === 'doctor' ? 'Consider sleep study referral for suspected sleep apnea. Evaluate medications that may affect sleep and underlying conditions contributing to insomnia.' : 'If sleep problems persist despite good sleep hygiene, consult your healthcare provider to rule out underlying sleep disorders.'}`;
+  }
+
+  if (lowerMessage.includes('nutrition') || lowerMessage.includes('diet')) {
+    return `A balanced diet is fundamental to good health and disease prevention.
+
+**Key principles of healthy eating:**
+• Eat a variety of foods from all food groups
+• Focus on whole, minimally processed foods
+• Include plenty of fruits and vegetables (aim for 5-9 servings daily)
+• Choose whole grains over refined grains
+• Include lean proteins (fish, poultry, legumes, nuts)
+• Limit saturated fats, trans fats, and added sugars
+• Stay hydrated with water
+
+**Portion control tips:**
+• Use smaller plates and bowls
+• Fill half your plate with vegetables
+• Quarter with lean protein
+• Quarter with whole grains
+• Listen to hunger and fullness cues
+
+**Special considerations:**
+• Mediterranean diet for heart health
+• DASH diet for blood pressure control
+• Diabetic meal planning for blood sugar management
+• Adequate calcium and vitamin D for bone health
+
+${userRole === 'doctor' ? 'Consider referral to registered dietitian for complex nutritional needs. Assess for nutritional deficiencies and drug-nutrient interactions.' : 'Consider consulting with a registered dietitian for personalized nutrition advice, especially if you have specific health conditions.'}`;
+  }
+
+  // Clinical guidelines for doctors
+  if (userRole === 'doctor' && lowerMessage.includes('guidelines')) {
+    return `Current clinical guidelines emphasize evidence-based practice and patient-centered care:
+
+**Key guideline sources:**
+• American Heart Association (AHA)
+• American Diabetes Association (ADA)
+• American College of Cardiology (ACC)
+• U.S. Preventive Services Task Force (USPSTF)
+• Centers for Disease Control and Prevention (CDC)
+
+**Recent updates to consider:**
+• Blood pressure targets individualized based on cardiovascular risk
+• Diabetes management with emphasis on cardiovascular outcomes
+• Cancer screening recommendations updated based on latest evidence
+• Antibiotic stewardship to combat resistance
+
+**Implementation strategies:**
+• Use clinical decision support tools
+• Regular continuing medical education
+• Quality improvement initiatives
+• Patient shared decision-making
+
+Stay current with guideline updates through professional organizations and peer-reviewed literature.`;
+  }
+
+  // Default responses based on context
+  if (context === 'doctor_consultation') {
+    return `I understand you're seeking clinical guidance. While I can provide general medical information, please remember that clinical decisions should always be based on:
+
+• Complete patient history and physical examination
+• Appropriate diagnostic testing when indicated
+• Current evidence-based guidelines
+• Individual patient factors and preferences
+• Consultation with specialists when appropriate
+
+For specific clinical scenarios, consider:
+• Reviewing current practice guidelines
+• Consulting with colleagues or specialists
+• Using clinical decision support tools
+• Engaging in shared decision-making with patients
+
+Is there a specific clinical topic or condition you'd like to discuss further?`;
+  }
+
+  if (context === 'patient_chat') {
+    return `I'm here to help provide general health information and support. Based on your question, here are some key points to consider:
+
+• Always consult with your healthcare provider for personalized medical advice
+• Keep track of your symptoms and any changes
+• Maintain open communication with your medical team
+• Follow prescribed treatment plans consistently
+• Don't hesitate to seek emergency care if you have concerning symptoms
+
+Remember, this information is for educational purposes and doesn't replace professional medical advice. Your healthcare provider knows your specific situation best.
+
+What specific health topic would you like to learn more about?`;
+  }
+
+  // Fallback response
+  return `Thank you for your question. I'm here to provide general health information and support. 
+
+For medical concerns, I recommend:
+• Consulting with qualified healthcare professionals
+• Seeking emergency care for urgent symptoms
+• Following evidence-based medical guidelines
+• Maintaining regular preventive care
+
+${userRole === 'patient' ? 'Please remember that this information is educational and doesn\'t replace professional medical advice.' : 'Consider current clinical guidelines and individual patient factors when making medical decisions.'}
+
+Is there a specific health topic you'd like to explore further?`;
 }

@@ -1,8 +1,10 @@
 import { authenticateToken } from '@/middleware/auth';
 
-// Rate limiting storage (in production, use Redis or database)
-const rateLimitStore = new Map();
-const DAILY_LIMIT = 50; // 50 requests per day per user
+// Simple in-memory rate limiting (in production, use Redis or database)
+const rateLimits = new Map();
+
+const DAILY_LIMIT = 50; // 50 requests per day
+const RESET_HOUR = 0; // Reset at midnight
 
 export async function GET(request) {
   try {
@@ -12,14 +14,33 @@ export async function GET(request) {
     }
 
     const { user } = auth;
-    const rateLimitInfo = getRateLimitInfo(user._id);
+    const userId = user._id.toString();
+    const today = new Date().toDateString();
+    const key = `${userId}:${today}`;
+
+    // Get current usage
+    const currentUsage = rateLimits.get(key) || { used: 0, date: today };
+    
+    // Check if we need to reset (new day)
+    if (currentUsage.date !== today) {
+      currentUsage.used = 0;
+      currentUsage.date = today;
+    }
+
+    const remaining = Math.max(0, DAILY_LIMIT - currentUsage.used);
+    const percentage = Math.min((currentUsage.used / DAILY_LIMIT) * 100, 100);
+
+    // Calculate reset time (next midnight)
+    const resetTime = new Date();
+    resetTime.setDate(resetTime.getDate() + 1);
+    resetTime.setHours(RESET_HOUR, 0, 0, 0);
 
     return Response.json({
       dailyLimit: DAILY_LIMIT,
-      used: rateLimitInfo.used,
-      remaining: rateLimitInfo.remaining,
-      resetTime: rateLimitInfo.resetTime,
-      percentage: Math.round((rateLimitInfo.used / DAILY_LIMIT) * 100)
+      used: currentUsage.used,
+      remaining,
+      percentage: Math.round(percentage),
+      resetTime: resetTime.toISOString(),
     });
   } catch (error) {
     console.error('Rate limit check error:', error);
@@ -27,25 +48,32 @@ export async function GET(request) {
   }
 }
 
-function getRateLimitInfo(userId) {
+export function incrementUsage(userId) {
   const today = new Date().toDateString();
-  const userKey = `${userId}_${today}`;
+  const key = `${userId}:${today}`;
   
-  const userLimit = rateLimitStore.get(userKey) || { count: 0, date: today };
+  const currentUsage = rateLimits.get(key) || { used: 0, date: today };
+  currentUsage.used += 1;
+  currentUsage.date = today;
   
-  // Reset if it's a new day
-  if (userLimit.date !== today) {
-    userLimit.count = 0;
-    userLimit.date = today;
-  }
-  
-  const remaining = DAILY_LIMIT - userLimit.count;
-  const resetTime = new Date();
-  resetTime.setHours(24, 0, 0, 0); // Next midnight
+  rateLimits.set(key, currentUsage);
   
   return {
-    used: userLimit.count,
-    remaining: Math.max(0, remaining),
-    resetTime: resetTime.toISOString()
+    used: currentUsage.used,
+    remaining: Math.max(0, DAILY_LIMIT - currentUsage.used),
+    limitExceeded: currentUsage.used > DAILY_LIMIT,
+  };
+}
+
+export function checkRateLimit(userId) {
+  const today = new Date().toDateString();
+  const key = `${userId}:${today}`;
+  
+  const currentUsage = rateLimits.get(key) || { used: 0, date: today };
+  
+  return {
+    used: currentUsage.used,
+    remaining: Math.max(0, DAILY_LIMIT - currentUsage.used),
+    limitExceeded: currentUsage.used >= DAILY_LIMIT,
   };
 }
