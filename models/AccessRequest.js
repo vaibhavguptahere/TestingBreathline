@@ -17,13 +17,12 @@ const accessRequestSchema = new mongoose.Schema({
   },
   accessLevel: {
     type: String,
-    enum: ['read', 'write', 'full'],
+    enum: ['read', 'write'],
     default: 'read',
   },
   recordCategories: [{
     type: String,
     enum: ['all', 'general', 'lab-results', 'prescription', 'imaging', 'emergency', 'consultation'],
-    default: 'all',
   }],
   urgency: {
     type: String,
@@ -32,16 +31,14 @@ const accessRequestSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'denied', 'expired'],
+    enum: ['pending', 'approved', 'denied'],
     default: 'pending',
   },
   responseMessage: String,
-  expiresAt: Date,
   respondedAt: Date,
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
+  expiresAt: Date,
+}, {
+  timestamps: true,
 });
 
 export default mongoose.models.AccessRequest || mongoose.model('AccessRequest', accessRequestSchema);

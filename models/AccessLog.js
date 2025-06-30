@@ -9,7 +9,6 @@ const accessLogSchema = new mongoose.Schema({
   accessorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
   },
   recordId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -23,11 +22,17 @@ const accessLogSchema = new mongoose.Schema({
   accessReason: String,
   ipAddress: String,
   userAgent: String,
+  emergencyToken: String,
+  metadata: {
+    duration: String,
+    location: String,
+  },
   timestamp: {
     type: Date,
     default: Date.now,
   },
-  emergencyToken: String,
+}, {
+  timestamps: true,
 });
 
 export default mongoose.models.AccessLog || mongoose.model('AccessLog', accessLogSchema);

@@ -13,14 +13,14 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['patient', 'doctor', 'emergency', 'admin'],
+    enum: ['patient', 'doctor', 'emergency'],
     required: true,
   },
   profile: {
     firstName: String,
     lastName: String,
-    dateOfBirth: Date,
     phone: String,
+    dateOfBirth: Date,
     address: String,
     emergencyContact: {
       name: String,
@@ -31,23 +31,27 @@ const userSchema = new mongoose.Schema({
     licenseNumber: String,
     specialization: String,
     hospital: String,
-    verified: {
-      type: Boolean,
-      default: false,
-    },
-    // Emergency responder fields
+    bio: String,
+    verified: { type: Boolean, default: false },
+    // Emergency responder specific fields
     badgeNumber: String,
     department: String,
+    station: String,
+    certifications: String,
+    // Settings
+    settings: {
+      emailNotifications: { type: Boolean, default: true },
+      smsNotifications: { type: Boolean, default: false },
+      emergencyAlerts: { type: Boolean, default: true },
+    },
   },
   isActive: {
     type: Boolean,
     default: true,
   },
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
   lastLogin: Date,
+}, {
+  timestamps: true,
 });
 
 export default mongoose.models.User || mongoose.model('User', userSchema);

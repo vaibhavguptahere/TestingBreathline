@@ -22,40 +22,32 @@ const medicalRecordSchema = new mongoose.Schema({
     mimetype: String,
     size: Number,
     path: String,
-    encrypted: Boolean,
+    encrypted: { type: Boolean, default: true },
   }],
   metadata: {
-    recordDate: Date,
+    recordDate: { type: Date, default: Date.now },
     doctorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
-    hospital: String,
-    isEmergencyVisible: {
-      type: Boolean,
-      default: false,
-    },
+    isEmergencyVisible: { type: Boolean, default: false },
   },
   accessPermissions: [{
     doctorId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
-    granted: Date,
+    granted: { type: Boolean, default: false },
+    grantedAt: Date,
     expiresAt: Date,
-    granted: {
-      type: Boolean,
-      default: false,
+    accessLevel: {
+      type: String,
+      enum: ['read', 'write'],
+      default: 'read',
     },
   }],
-  createdAt: {
-    type: Date,
-    default: Date.now,
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now,
-  },
+}, {
+  timestamps: true,
 });
 
 export default mongoose.models.MedicalRecord || mongoose.model('MedicalRecord', medicalRecordSchema);
