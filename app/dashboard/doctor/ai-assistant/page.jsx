@@ -1,15 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 import { 
   Bot, 
   Brain, 
@@ -25,23 +25,29 @@ import {
   Activity,
   Target,
   Clock,
-  Zap
+  Zap,
+  MessageCircle,
+  Send,
+  BarChart3,
+  Users,
+  Stethoscope
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-export default function AIAssistant() {
+export default function DoctorAIAssistant() {
   const { user } = useAuth();
   const [selectedPatient, setSelectedPatient] = useState('');
   const [analysisType, setAnalysisType] = useState('comprehensive');
   const [customQuery, setCustomQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [aiSummary, setAiSummary] = useState(null);
-  const [documentAnalysis, setDocumentAnalysis] = useState(null);
-  const [analyzingDocument, setAnalyzingDocument] = useState(false);
-  const [documentText, setDocumentText] = useState('');
-  const [documentType, setDocumentType] = useState('lab-results');
-  const [symptoms, setSymptoms] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [currentMessage, setCurrentMessage] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const [rateLimitInfo, setRateLimitInfo] = useState(null);
+  const [loadingRateLimit, setLoadingRateLimit] = useState(true);
 
+  // Mock patients - in real app, fetch from API
   const patients = [
     { id: '1', name: 'John Smith', age: 45, conditions: ['Diabetes', 'Hypertension'] },
     { id: '2', name: 'Sarah Johnson', age: 32, conditions: ['Asthma'] },
@@ -56,17 +62,45 @@ export default function AIAssistant() {
     { value: 'custom', label: 'Custom Analysis' },
   ];
 
-  const documentTypes = [
-    { value: 'lab-results', label: 'Lab Results' },
-    { value: 'imaging', label: 'Medical Imaging' },
-    { value: 'prescription', label: 'Prescription' },
-    { value: 'consultation', label: 'Consultation Notes' },
-    { value: 'general', label: 'General Medical Document' },
-  ];
+  useEffect(() => {
+    fetchRateLimitInfo();
+    // Add welcome message
+    setChatMessages([{
+      id: Date.now(),
+      type: 'ai',
+      content: `Hello Dr. ${user?.profile?.firstName || 'Doctor'}! I'm your AI clinical assistant. I can help with patient analysis, clinical decision support, and medical information. How can I assist you today?`,
+      timestamp: new Date(),
+    }]);
+  }, [user]);
+
+  const fetchRateLimitInfo = async () => {
+    try {
+      const response = await fetch('/api/ai/rate-limit', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setRateLimitInfo(data);
+      }
+    } catch (error) {
+      console.error('Error fetching rate limit info:', error);
+    } finally {
+      setLoadingRateLimit(false);
+    }
+  };
 
   const generateAISummary = async () => {
     if (!selectedPatient) {
       toast.error('Please select a patient');
+      return;
+    }
+
+    // Check rate limit
+    if (rateLimitInfo && rateLimitInfo.remaining <= 0) {
+      toast.error('Daily AI request limit reached. Resets at midnight.');
       return;
     }
 
@@ -89,6 +123,13 @@ export default function AIAssistant() {
         const data = await response.json();
         setAiSummary(data.summary);
         toast.success('AI analysis completed successfully');
+        
+        // Update rate limit
+        setRateLimitInfo(prev => ({
+          ...prev,
+          used: prev.used + 1,
+          remaining: prev.remaining - 1,
+        }));
       } else {
         throw new Error('Failed to generate AI summary');
       }
@@ -99,38 +140,77 @@ export default function AIAssistant() {
     }
   };
 
-  const analyzeDocument = async () => {
-    if (!documentText.trim()) {
-      toast.error('Please enter document text to analyze');
+  const sendChatMessage = async () => {
+    if (!currentMessage.trim()) return;
+
+    // Check rate limit
+    if (rateLimitInfo && rateLimitInfo.remaining <= 0) {
+      toast.error('Daily AI request limit reached. Resets at midnight.');
       return;
     }
 
-    setAnalyzingDocument(true);
+    const userMessage = {
+      id: Date.now(),
+      type: 'user',
+      content: currentMessage,
+      timestamp: new Date(),
+    };
+
+    setChatMessages(prev => [...prev, userMessage]);
+    setCurrentMessage('');
+    setIsTyping(true);
+
     try {
-      const response = await fetch('/api/ai/analyze-document', {
+      const response = await fetch('/api/ai/openai-chat', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          documentText,
-          documentType,
-          symptoms,
+          message: currentMessage,
+          context: 'doctor_consultation',
+          patientId: selectedPatient,
         }),
       });
 
+      const data = await response.json();
+
       if (response.ok) {
-        const data = await response.json();
-        setDocumentAnalysis(data);
-        toast.success('Document analysis completed successfully');
+        const aiResponse = {
+          id: Date.now() + 1,
+          type: 'ai',
+          content: data.response,
+          timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, aiResponse]);
+        
+        // Update rate limit info
+        if (data.rateLimitInfo) {
+          setRateLimitInfo(prev => ({
+            ...prev,
+            used: prev.used + 1,
+            remaining: data.rateLimitInfo.remaining,
+          }));
+        }
       } else {
-        throw new Error('Failed to analyze document');
+        if (data.rateLimitExceeded) {
+          toast.error(data.error);
+        } else {
+          throw new Error(data.error || 'Failed to get AI response');
+        }
       }
     } catch (error) {
-      toast.error('Failed to analyze document');
+      toast.error('Failed to get AI response');
+      const errorResponse = {
+        id: Date.now() + 1,
+        type: 'ai',
+        content: 'I apologize, but I encountered an error. Please try again later.',
+        timestamp: new Date(),
+      };
+      setChatMessages(prev => [...prev, errorResponse]);
     } finally {
-      setAnalyzingDocument(false);
+      setIsTyping(false);
     }
   };
 
@@ -147,32 +227,43 @@ export default function AIAssistant() {
     }
   };
 
-  const getSeverityColor = (severity) => {
-    switch (severity?.toLowerCase()) {
-      case 'low':
-        return 'text-green-600';
-      case 'moderate':
-        return 'text-yellow-600';
-      case 'high':
-        return 'text-red-600';
-      default:
-        return 'text-gray-600';
-    }
-  };
-
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">AI Medical Assistant</h1>
+        <h1 className="text-3xl font-bold">AI Clinical Assistant</h1>
         <p className="text-muted-foreground">
-          Get AI-powered insights and analysis for your patients and medical documents
+          Get AI-powered insights and analysis for your patients and clinical decisions
         </p>
       </div>
+
+      {/* Rate Limit Info */}
+      {!loadingRateLimit && rateLimitInfo && (
+        <Card className="border-blue-200 bg-blue-50 dark:bg-blue-900/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center">
+              <BarChart3 className="mr-2 h-4 w-4" />
+              Daily AI Usage
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Used: {rateLimitInfo.used} / {rateLimitInfo.dailyLimit}</span>
+                <span>{rateLimitInfo.remaining} remaining</span>
+              </div>
+              <Progress value={rateLimitInfo.percentage} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Resets at: {new Date(rateLimitInfo.resetTime).toLocaleTimeString()}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="patient-analysis" className="space-y-6">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="patient-analysis">Patient Analysis</TabsTrigger>
-          <TabsTrigger value="document-analysis">Document Analysis</TabsTrigger>
+          <TabsTrigger value="clinical-chat">Clinical Chat</TabsTrigger>
         </TabsList>
 
         <TabsContent value="patient-analysis" className="space-y-6">
@@ -191,39 +282,33 @@ export default function AIAssistant() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Select Patient</label>
-                  <Select value={selectedPatient} onValueChange={setSelectedPatient}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Choose a patient" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {patients.map((patient) => (
-                        <SelectItem key={patient.id} value={patient.id}>
-                          <div className="flex items-center justify-between w-full">
-                            <span>{patient.name}</span>
-                            <span className="text-xs text-muted-foreground ml-2">
-                              Age {patient.age}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <select
+                    value={selectedPatient}
+                    onChange={(e) => setSelectedPatient(e.target.value)}
+                    className="w-full p-2 border rounded-md"
+                  >
+                    <option value="">Choose a patient</option>
+                    {patients.map((patient) => (
+                      <option key={patient.id} value={patient.id}>
+                        {patient.name} (Age {patient.age})
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Analysis Type</label>
-                  <Select value={analysisType} onValueChange={setAnalysisType}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {analysisTypes.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          {type.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <select
+                    value={analysisType}
+                    onChange={(e) => setAnalysisType(e.target.value)}
+                    className="w-full p-2 border rounded-md"
+                  >
+                    {analysisTypes.map((type) => (
+                      <option key={type.value} value={type.value}>
+                        {type.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {analysisType === 'custom' && (
@@ -240,7 +325,7 @@ export default function AIAssistant() {
 
                 <Button
                   onClick={generateAISummary}
-                  disabled={loading || !selectedPatient}
+                  disabled={loading || !selectedPatient || (rateLimitInfo && rateLimitInfo.remaining <= 0)}
                   className="w-full"
                 >
                   {loading ? (
@@ -255,6 +340,15 @@ export default function AIAssistant() {
                     </>
                   )}
                 </Button>
+
+                {rateLimitInfo && rateLimitInfo.remaining <= 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Daily AI request limit reached. Resets at midnight.
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 {selectedPatient && (
                   <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
@@ -286,10 +380,10 @@ export default function AIAssistant() {
               <CardHeader>
                 <CardTitle className="flex items-center">
                   <Lightbulb className="mr-2 h-5 w-5 text-yellow-600" />
-                  Quick AI Actions
+                  Quick Clinical Actions
                 </CardTitle>
                 <CardDescription>
-                  Common AI-powered medical analysis tools
+                  Common AI-powered clinical analysis tools
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -323,7 +417,7 @@ export default function AIAssistant() {
               <CardHeader>
                 <CardTitle className="flex items-center text-purple-900 dark:text-purple-100">
                   <Bot className="mr-2 h-5 w-5" />
-                  AI Medical Analysis Results
+                  AI Clinical Analysis Results
                 </CardTitle>
                 <div className="flex items-center space-x-2">
                   <Badge className={getRiskLevelColor(aiSummary.aiInsights?.riskLevel)}>
@@ -331,6 +425,9 @@ export default function AIAssistant() {
                   </Badge>
                   <Badge variant="outline">
                     Confidence: {Math.round(aiSummary.confidence * 100)}%
+                  </Badge>
+                  <Badge variant="outline">
+                    Records: {aiSummary.medicalHistory?.totalRecords || 0}
                   </Badge>
                 </div>
               </CardHeader>
@@ -345,107 +442,80 @@ export default function AIAssistant() {
                     <div className="space-y-1 text-sm">
                       <p><span className="font-medium">Name:</span> {aiSummary.patientInfo.name}</p>
                       <p><span className="font-medium">Age:</span> {aiSummary.patientInfo.age}</p>
-                      <p><span className="font-medium">Gender:</span> {aiSummary.patientInfo.gender}</p>
-                      <p><span className="font-medium">Blood Type:</span> {aiSummary.patientInfo.bloodType}</p>
+                      <p><span className="font-medium">Email:</span> {aiSummary.patientInfo.email}</p>
+                      <p><span className="font-medium">Phone:</span> {aiSummary.patientInfo.phone}</p>
                     </div>
                   </div>
 
                   <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
-                    <h4 className="font-semibold mb-2">AI Health Assessment</h4>
+                    <h4 className="font-semibold mb-2">Medical History Summary</h4>
                     <div className="space-y-1 text-sm">
-                      <p><span className="font-medium">Overall Health:</span> {aiSummary.aiInsights.overallHealth}</p>
-                      <p><span className="font-medium">Risk Level:</span> 
-                        <Badge className={`ml-2 ${getRiskLevelColor(aiSummary.aiInsights.riskLevel)}`}>
-                          {aiSummary.aiInsights.riskLevel}
-                        </Badge>
-                      </p>
+                      <p><span className="font-medium">Total Records:</span> {aiSummary.medicalHistory.totalRecords}</p>
+                      <p><span className="font-medium">Conditions:</span> {aiSummary.medicalHistory.chronicConditions?.length || 0}</p>
+                      <p><span className="font-medium">Allergies:</span> {aiSummary.medicalHistory.allergies?.length || 0}</p>
+                      <p><span className="font-medium">Medications:</span> {aiSummary.currentMedications?.length || 0}</p>
                     </div>
                   </div>
                 </div>
 
                 {/* Medical History */}
-                <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
-                  <h4 className="font-semibold mb-3">Medical History</h4>
-                  <div className="grid md:grid-cols-3 gap-4 text-sm">
-                    <div>
-                      <p className="font-medium text-red-700 dark:text-red-400 mb-1">Chronic Conditions</p>
-                      <ul className="space-y-1">
-                        {aiSummary.medicalHistory.chronicConditions.map((condition, index) => (
-                          <li key={index} className="text-xs">• {condition}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div>
-                      <p className="font-medium text-orange-700 dark:text-orange-400 mb-1">Allergies</p>
-                      <ul className="space-y-1">
-                        {aiSummary.medicalHistory.allergies.map((allergy, index) => (
-                          <li key={index} className="text-xs">• {allergy}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div>
-                      <p className="font-medium text-blue-700 dark:text-blue-400 mb-1">Surgeries</p>
-                      <ul className="space-y-1">
-                        {aiSummary.medicalHistory.surgeries.map((surgery, index) => (
-                          <li key={index} className="text-xs">• {surgery}</li>
-                        ))}
-                      </ul>
+                {aiSummary.medicalHistory.chronicConditions?.length > 0 && (
+                  <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold mb-3">Chronic Conditions</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {aiSummary.medicalHistory.chronicConditions.map((condition, index) => (
+                        <Badge key={index} variant="outline" className="text-xs">
+                          {condition}
+                        </Badge>
+                      ))}
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Current Medications */}
-                <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
-                  <h4 className="font-semibold mb-3">Current Medications</h4>
-                  <div className="grid md:grid-cols-2 gap-3">
-                    {aiSummary.currentMedications.map((med, index) => (
-                      <div key={index} className="p-3 border rounded-lg">
-                        <p className="font-medium">{med.name}</p>
-                        <p className="text-sm text-muted-foreground">{med.dosage}</p>
-                        <p className="text-xs text-muted-foreground">{med.purpose}</p>
-                      </div>
-                    ))}
+                {aiSummary.currentMedications?.length > 0 && (
+                  <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
+                    <h4 className="font-semibold mb-3">Current Medications</h4>
+                    <div className="grid md:grid-cols-2 gap-3">
+                      {aiSummary.currentMedications.slice(0, 6).map((med, index) => (
+                        <div key={index} className="p-3 border rounded-lg">
+                          <p className="font-medium">{med.name}</p>
+                          <p className="text-sm text-muted-foreground">{med.dosage}</p>
+                          <p className="text-xs text-muted-foreground">{med.purpose}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* AI Insights */}
                 <div className="p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 rounded-lg">
                   <h4 className="font-semibold mb-3 flex items-center">
                     <Brain className="mr-2 h-4 w-4" />
-                    AI Insights & Recommendations
+                    AI Clinical Insights
                   </h4>
                   
                   <div className="space-y-4">
                     <div>
-                      <p className="font-medium text-sm mb-2">Priority Areas for Attention:</p>
+                      <p className="font-medium text-sm mb-2">Risk Assessment:</p>
                       <div className="flex flex-wrap gap-2">
-                        {aiSummary.aiInsights.priorityAreas.map((area, index) => (
-                          <Badge key={index} variant="outline" className="text-xs">
-                            {area}
-                          </Badge>
+                        {Object.entries(aiSummary.riskFactors || {}).map(([category, factors]) => (
+                          factors.length > 0 && (
+                            <div key={category} className="text-xs">
+                              <span className="font-medium capitalize">{category}:</span> {factors.join(', ')}
+                            </div>
+                          )
                         ))}
                       </div>
                     </div>
 
                     <div>
-                      <p className="font-medium text-sm mb-2">AI Recommendations:</p>
+                      <p className="font-medium text-sm mb-2">Clinical Recommendations:</p>
                       <ul className="space-y-1">
-                        {aiSummary.recommendations.slice(0, 3).map((rec, index) => (
+                        {aiSummary.recommendations?.slice(0, 3).map((rec, index) => (
                           <li key={index} className="text-sm flex items-start">
                             <CheckCircle className="mr-2 h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
                             {rec}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div>
-                      <p className="font-medium text-sm mb-2">Next Steps:</p>
-                      <ul className="space-y-1">
-                        {aiSummary.aiInsights.nextSteps.map((step, index) => (
-                          <li key={index} className="text-sm flex items-start">
-                            <TrendingUp className="mr-2 h-3 w-3 text-blue-600 mt-0.5 flex-shrink-0" />
-                            {step}
                           </li>
                         ))}
                       </ul>
@@ -454,19 +524,21 @@ export default function AIAssistant() {
                 </div>
 
                 {/* Emergency Information */}
-                <Alert className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
-                  <AlertTriangle className="h-4 w-4 text-red-600" />
-                  <AlertDescription>
-                    <div className="space-y-2">
-                      <p className="font-medium text-red-800 dark:text-red-200">Emergency Information</p>
-                      <div className="text-sm text-red-700 dark:text-red-300">
-                        <p><strong>Emergency Contact:</strong> {aiSummary.emergencyInfo.emergencyContact}</p>
-                        <p><strong>Critical Allergies:</strong> {aiSummary.emergencyInfo.criticalAllergies.join(', ')}</p>
-                        <p><strong>Current Medications:</strong> {aiSummary.emergencyInfo.currentMedications.join(', ')}</p>
+                {aiSummary.emergencyInfo && (
+                  <Alert className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
+                    <AlertTriangle className="h-4 w-4 text-red-600" />
+                    <AlertDescription>
+                      <div className="space-y-2">
+                        <p className="font-medium text-red-800 dark:text-red-200">Emergency Information</p>
+                        <div className="text-sm text-red-700 dark:text-red-300">
+                          <p><strong>Emergency Contact:</strong> {aiSummary.emergencyInfo.emergencyContact?.name || 'Not provided'}</p>
+                          <p><strong>Critical Allergies:</strong> {aiSummary.emergencyInfo.criticalAllergies?.join(', ') || 'None listed'}</p>
+                          <p><strong>Emergency Records:</strong> {aiSummary.emergencyInfo.emergencyRecords || 0}</p>
+                        </div>
                       </div>
-                    </div>
-                  </AlertDescription>
-                </Alert>
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 <div className="text-xs text-muted-foreground text-center">
                   Analysis generated on {new Date(aiSummary.lastUpdated).toLocaleString()} • 
@@ -477,222 +549,158 @@ export default function AIAssistant() {
           )}
         </TabsContent>
 
-        <TabsContent value="document-analysis" className="space-y-6">
-          <div className="grid lg:grid-cols-2 gap-6">
-            {/* Document Analysis Input */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Scan className="mr-2 h-5 w-5 text-blue-600" />
-                  Document AI Analysis
-                </CardTitle>
-                <CardDescription>
-                  Analyze medical documents with AI for insights and recommendations
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Document Type</label>
-                  <Select value={documentType} onValueChange={setDocumentType}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {documentTypes.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          {type.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+        <TabsContent value="clinical-chat" className="space-y-6">
+          <div className="grid lg:grid-cols-3 gap-6">
+            {/* Chat Interface */}
+            <div className="lg:col-span-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <MessageCircle className="mr-2 h-5 w-5 text-blue-600" />
+                    AI Clinical Chat
+                  </CardTitle>
+                  <CardDescription>
+                    Get clinical decision support and medical information
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Chat Messages */}
+                  <div className="h-96 overflow-y-auto border rounded-lg p-4 space-y-4">
+                    {chatMessages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[80%] p-3 rounded-lg ${
+                            message.type === 'user'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 dark:bg-gray-800'
+                          }`}
+                        >
+                          <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+                          <p className="text-xs opacity-70 mt-1">
+                            {message.timestamp.toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {isTyping && (
+                      <div className="flex justify-start">
+                        <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg">
+                          <div className="flex space-x-1">
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Document Text</label>
-                  <Textarea
-                    value={documentText}
-                    onChange={(e) => setDocumentText(e.target.value)}
-                    placeholder="Paste or type the medical document content here..."
-                    rows={6}
-                    className="min-h-[150px]"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Patient Symptoms (Optional)</label>
-                  <Input
-                    value={symptoms}
-                    onChange={(e) => setSymptoms(e.target.value)}
-                    placeholder="e.g., chest pain, shortness of breath..."
-                  />
-                </div>
-
-                <Button
-                  onClick={analyzeDocument}
-                  disabled={analyzingDocument || !documentText.trim()}
-                  className="w-full"
-                >
-                  {analyzingDocument ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Analyzing Document...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="mr-2 h-4 w-4" />
-                      Analyze Document
-                    </>
+                  {/* Chat Input */}
+                  <div className="flex space-x-2">
+                    <Input
+                      value={currentMessage}
+                      onChange={(e) => setCurrentMessage(e.target.value)}
+                      placeholder="Ask about clinical decisions, drug interactions, diagnoses..."
+                      onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
+                      className="flex-1"
+                      disabled={rateLimitInfo && rateLimitInfo.remaining <= 0}
+                    />
+                    <Button 
+                      onClick={sendChatMessage} 
+                      disabled={!currentMessage.trim() || isTyping || (rateLimitInfo && rateLimitInfo.remaining <= 0)}
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  {rateLimitInfo && rateLimitInfo.remaining <= 0 && (
+                    <Alert>
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        Daily AI request limit reached. Resets at midnight.
+                      </AlertDescription>
+                    </Alert>
                   )}
-                </Button>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
 
-            {/* Analysis Features */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center">
-                  <Target className="mr-2 h-5 w-5 text-green-600" />
-                  AI Analysis Features
-                </CardTitle>
-                <CardDescription>
-                  What our AI can analyze in medical documents
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-start space-x-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Key Findings Extraction</p>
-                    <p className="text-xs text-muted-foreground">
-                      Identifies important medical findings and abnormalities
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Risk Assessment</p>
-                    <p className="text-xs text-muted-foreground">
-                      Evaluates potential health risks and severity levels
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Treatment Recommendations</p>
-                    <p className="text-xs text-muted-foreground">
-                      Suggests follow-up actions and treatment options
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Drug Interactions</p>
-                    <p className="text-xs text-muted-foreground">
-                      Checks for potential medication conflicts
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start space-x-2">
-                  <CheckCircle className="h-4 w-4 text-green-600 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-medium">Trend Analysis</p>
-                    <p className="text-xs text-muted-foreground">
-                      Identifies patterns and changes over time
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Document Analysis Results */}
-          {documentAnalysis && (
-            <Card className="border-blue-200 bg-blue-50 dark:bg-blue-900/20">
-              <CardHeader>
-                <CardTitle className="flex items-center text-blue-900 dark:text-blue-100">
-                  <Brain className="mr-2 h-5 w-5" />
-                  Document Analysis Results
-                </CardTitle>
-                <div className="flex items-center space-x-2">
-                  <Badge className={getRiskLevelColor(documentAnalysis.analysis?.severity)}>
-                    Severity: {documentAnalysis.analysis?.severity}
-                  </Badge>
-                  <Badge variant="outline">
-                    Confidence: {Math.round(documentAnalysis.analysis?.confidence * 100)}%
-                  </Badge>
-                  <Badge variant="outline">
-                    <Clock className="mr-1 h-3 w-3" />
-                    {new Date(documentAnalysis.timestamp).toLocaleString()}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Summary */}
-                <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
-                  <h4 className="font-semibold mb-2 flex items-center">
+            {/* Clinical Tools */}
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Stethoscope className="mr-2 h-5 w-5 text-green-600" />
+                    Quick Clinical Queries
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("What are the latest guidelines for hypertension management?")}
+                  >
+                    <TrendingUp className="mr-2 h-4 w-4" />
+                    Clinical Guidelines
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("Check drug interactions for metformin and lisinopril")}
+                  >
+                    <AlertTriangle className="mr-2 h-4 w-4" />
+                    Drug Interactions
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("Differential diagnosis for chest pain in 45-year-old male")}
+                  >
+                    <Brain className="mr-2 h-4 w-4" />
+                    Differential Diagnosis
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("Recommended lab tests for diabetes monitoring")}
+                  >
                     <FileText className="mr-2 h-4 w-4" />
-                    Analysis Summary
-                  </h4>
-                  <p className="text-sm">{documentAnalysis.analysis?.summary}</p>
-                </div>
+                    Lab Recommendations
+                  </Button>
+                </CardContent>
+              </Card>
 
-                {/* Key Findings */}
-                <div className="p-4 bg-white dark:bg-gray-800 rounded-lg">
-                  <h4 className="font-semibold mb-3 flex items-center">
-                    <Activity className="mr-2 h-4 w-4" />
-                    Key Findings
-                  </h4>
-                  <ul className="space-y-2">
-                    {documentAnalysis.analysis?.findings?.map((finding, index) => (
-                      <li key={index} className="text-sm flex items-start">
-                        <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
-                        {finding}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Recommendations */}
-                <div className="p-4 bg-gradient-to-r from-green-50 to-blue-50 dark:from-green-900/20 dark:to-blue-900/20 rounded-lg">
-                  <h4 className="font-semibold mb-3 flex items-center">
-                    <Lightbulb className="mr-2 h-4 w-4" />
-                    AI Recommendations
-                  </h4>
-                  <ul className="space-y-2">
-                    {documentAnalysis.analysis?.recommendations?.map((rec, index) => (
-                      <li key={index} className="text-sm flex items-start">
-                        <CheckCircle className="mr-2 h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
-                        {rec}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {/* Severity Assessment */}
-                <Alert className={`border-${documentAnalysis.analysis?.severity === 'high' ? 'red' : documentAnalysis.analysis?.severity === 'moderate' ? 'yellow' : 'green'}-200`}>
-                  <AlertTriangle className={`h-4 w-4 ${getSeverityColor(documentAnalysis.analysis?.severity)}`} />
-                  <AlertDescription>
-                    <div className="space-y-1">
-                      <p className="font-medium">Severity Assessment: {documentAnalysis.analysis?.severity?.toUpperCase()}</p>
-                      <p className="text-sm">
-                        {documentAnalysis.analysis?.severity === 'high' && 'Immediate attention may be required. Consider urgent follow-up.'}
-                        {documentAnalysis.analysis?.severity === 'moderate' && 'Monitor closely and schedule appropriate follow-up.'}
-                        {documentAnalysis.analysis?.severity === 'low' && 'Routine monitoring and standard care protocols apply.'}
-                      </p>
-                    </div>
-                  </AlertDescription>
-                </Alert>
-
-                <div className="text-xs text-muted-foreground text-center">
-                  Document Type: {documentAnalysis.analysis?.documentType} • 
-                  Analyzed: {new Date(documentAnalysis.analysis?.analyzedAt).toLocaleString()}
-                </div>
-              </CardContent>
-            </Card>
-          )}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Patient Context</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Select Patient for Context</label>
+                    <select
+                      value={selectedPatient}
+                      onChange={(e) => setSelectedPatient(e.target.value)}
+                      className="w-full p-2 border rounded-md text-sm"
+                    >
+                      <option value="">No patient selected</option>
+                      {patients.map((patient) => (
+                        <option key={patient.id} value={patient.id}>
+                          {patient.name}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-muted-foreground">
+                      Select a patient to provide context for AI responses
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

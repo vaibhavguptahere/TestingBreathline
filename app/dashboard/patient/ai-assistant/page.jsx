@@ -1,15 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 import { 
   Bot, 
   Brain, 
@@ -33,7 +33,9 @@ import {
   Eye,
   MessageCircle,
   Send,
-  Sparkles
+  Sparkles,
+  BarChart3,
+  Shield
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -44,11 +46,12 @@ export default function PatientAIAssistant() {
   const [isTyping, setIsTyping] = useState(false);
   const [symptoms, setSymptoms] = useState([]);
   const [currentSymptom, setCurrentSymptom] = useState('');
-  const [analysisType, setAnalysisType] = useState('symptom-checker');
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [documentText, setDocumentText] = useState('');
   const [documentType, setDocumentType] = useState('lab-results');
+  const [rateLimitInfo, setRateLimitInfo] = useState(null);
+  const [loadingRateLimit, setLoadingRateLimit] = useState(true);
 
   const commonSymptoms = [
     'Headache', 'Fever', 'Cough', 'Fatigue', 'Nausea',
@@ -56,13 +59,35 @@ export default function PatientAIAssistant() {
     'Sore throat', 'Runny nose', 'Stomach pain', 'Muscle aches', 'Rash'
   ];
 
-  const analysisTypes = [
-    { value: 'symptom-checker', label: 'Symptom Checker' },
-    { value: 'health-insights', label: 'Health Insights' },
-    { value: 'medication-info', label: 'Medication Information' },
-    { value: 'wellness-tips', label: 'Wellness Tips' },
-    { value: 'document-analysis', label: 'Document Analysis' },
-  ];
+  useEffect(() => {
+    fetchRateLimitInfo();
+    // Add welcome message
+    setChatMessages([{
+      id: Date.now(),
+      type: 'ai',
+      content: `Hello ${user?.profile?.firstName || 'there'}! I'm your AI health assistant. I can help answer questions about your health, analyze your medical records, and provide personalized health insights. What would you like to know today?`,
+      timestamp: new Date(),
+    }]);
+  }, [user]);
+
+  const fetchRateLimitInfo = async () => {
+    try {
+      const response = await fetch('/api/ai/rate-limit', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setRateLimitInfo(data);
+      }
+    } catch (error) {
+      console.error('Error fetching rate limit info:', error);
+    } finally {
+      setLoadingRateLimit(false);
+    }
+  };
 
   const addSymptom = () => {
     if (currentSymptom.trim() && !symptoms.includes(currentSymptom.trim())) {
@@ -84,6 +109,12 @@ export default function PatientAIAssistant() {
   const sendChatMessage = async () => {
     if (!currentMessage.trim()) return;
 
+    // Check rate limit
+    if (rateLimitInfo && rateLimitInfo.remaining <= 0) {
+      toast.error('Daily AI request limit reached. Resets at midnight.');
+      return;
+    }
+
     const userMessage = {
       id: Date.now(),
       type: 'user',
@@ -95,34 +126,58 @@ export default function PatientAIAssistant() {
     setCurrentMessage('');
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiResponse = {
+    try {
+      const response = await fetch('/api/ai/openai-chat', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: currentMessage,
+          context: 'patient_chat',
+          patientId: user._id,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        const aiResponse = {
+          id: Date.now() + 1,
+          type: 'ai',
+          content: data.response,
+          timestamp: new Date(),
+        };
+        setChatMessages(prev => [...prev, aiResponse]);
+        
+        // Update rate limit info
+        if (data.rateLimitInfo) {
+          setRateLimitInfo(prev => ({
+            ...prev,
+            used: prev.used + 1,
+            remaining: data.rateLimitInfo.remaining,
+          }));
+        }
+      } else {
+        if (data.rateLimitExceeded) {
+          toast.error(data.error);
+        } else {
+          throw new Error(data.error || 'Failed to get AI response');
+        }
+      }
+    } catch (error) {
+      toast.error('Failed to get AI response');
+      const errorResponse = {
         id: Date.now() + 1,
         type: 'ai',
-        content: generateAIResponse(currentMessage),
+        content: 'I apologize, but I encountered an error. Please try again later.',
         timestamp: new Date(),
       };
-      setChatMessages(prev => [...prev, aiResponse]);
+      setChatMessages(prev => [...prev, errorResponse]);
+    } finally {
       setIsTyping(false);
-    }, 2000);
-  };
-
-  const generateAIResponse = (message) => {
-    const responses = {
-      'headache': "Headaches can have various causes including stress, dehydration, lack of sleep, or tension. For mild headaches, try drinking water, resting in a quiet dark room, and applying a cold compress. If headaches are severe, frequent, or accompanied by other symptoms like fever, vision changes, or neck stiffness, please consult a healthcare provider.",
-      'fever': "A fever is your body's natural response to infection. For adults, a fever is generally considered 100.4°F (38°C) or higher. Stay hydrated, rest, and consider over-the-counter fever reducers if comfortable. Seek medical attention if fever exceeds 103°F (39.4°C), persists for more than 3 days, or is accompanied by severe symptoms.",
-      'cough': "Coughs can be caused by viral infections, allergies, or irritants. For a dry cough, try honey, warm liquids, and humidified air. For productive coughs, stay hydrated to help thin mucus. See a doctor if cough persists more than 3 weeks, produces blood, or is accompanied by fever and difficulty breathing.",
-      'default': "I understand you're concerned about your symptoms. While I can provide general health information, it's important to consult with a healthcare professional for proper diagnosis and treatment. They can evaluate your specific situation and provide personalized medical advice."
-    };
-
-    const lowerMessage = message.toLowerCase();
-    for (const [key, response] of Object.entries(responses)) {
-      if (lowerMessage.includes(key)) {
-        return response;
-      }
     }
-    return responses.default;
   };
 
   const analyzeSymptoms = async () => {
@@ -131,65 +186,42 @@ export default function PatientAIAssistant() {
       return;
     }
 
+    // Check rate limit
+    if (rateLimitInfo && rateLimitInfo.remaining <= 0) {
+      toast.error('Daily AI request limit reached. Resets at midnight.');
+      return;
+    }
+
     setAnalyzing(true);
     try {
-      // Simulate AI analysis
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      const mockAnalysis = {
-        symptoms: symptoms,
-        possibleCauses: [
-          {
-            condition: 'Common Cold',
-            probability: 75,
-            description: 'A viral infection affecting the upper respiratory tract',
-            severity: 'mild',
-            recommendations: [
-              'Get plenty of rest',
-              'Stay hydrated with fluids',
-              'Use a humidifier or breathe steam',
-              'Consider over-the-counter pain relievers'
-            ]
-          },
-          {
-            condition: 'Seasonal Allergies',
-            probability: 45,
-            description: 'Allergic reaction to environmental allergens',
-            severity: 'mild',
-            recommendations: [
-              'Avoid known allergens',
-              'Consider antihistamines',
-              'Keep windows closed during high pollen days',
-              'Shower after being outdoors'
-            ]
-          },
-          {
-            condition: 'Stress/Tension',
-            probability: 30,
-            description: 'Physical symptoms related to stress or anxiety',
-            severity: 'mild',
-            recommendations: [
-              'Practice relaxation techniques',
-              'Ensure adequate sleep',
-              'Regular exercise',
-              'Consider stress management counseling'
-            ]
-          }
-        ],
-        whenToSeekCare: [
-          'Symptoms worsen or persist beyond 7-10 days',
-          'Fever above 101.3°F (38.5°C)',
-          'Difficulty breathing or chest pain',
-          'Severe headache or neck stiffness',
-          'Signs of dehydration'
-        ],
-        disclaimer: 'This analysis is for informational purposes only and should not replace professional medical advice.'
-      };
+      const response = await fetch('/api/ai/smart-diagnosis', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          symptoms,
+          patientId: user._id,
+        }),
+      });
 
-      setAiAnalysis(mockAnalysis);
-      toast.success('Symptom analysis completed');
+      if (response.ok) {
+        const data = await response.json();
+        setAiAnalysis(data.diagnosis);
+        toast.success('Symptom analysis completed');
+        
+        // Update rate limit
+        setRateLimitInfo(prev => ({
+          ...prev,
+          used: prev.used + 1,
+          remaining: prev.remaining - 1,
+        }));
+      } else {
+        throw new Error('Analysis failed');
+      }
     } catch (error) {
-      toast.error('Analysis failed. Please try again.');
+      toast.error('Failed to analyze symptoms');
     } finally {
       setAnalyzing(false);
     }
@@ -198,6 +230,12 @@ export default function PatientAIAssistant() {
   const analyzeDocument = async () => {
     if (!documentText.trim()) {
       toast.error('Please enter document text to analyze');
+      return;
+    }
+
+    // Check rate limit
+    if (rateLimitInfo && rateLimitInfo.remaining <= 0) {
+      toast.error('Daily AI request limit reached. Resets at midnight.');
       return;
     }
 
@@ -223,6 +261,13 @@ export default function PatientAIAssistant() {
           type: 'document'
         });
         toast.success('Document analysis completed');
+        
+        // Update rate limit
+        setRateLimitInfo(prev => ({
+          ...prev,
+          used: prev.used + 1,
+          remaining: prev.remaining - 1,
+        }));
       } else {
         throw new Error('Analysis failed');
       }
@@ -242,11 +287,11 @@ export default function PatientAIAssistant() {
 
   const getSeverityColor = (severity) => {
     switch (severity?.toLowerCase()) {
-      case 'mild':
+      case 'low':
         return 'bg-green-100 text-green-800 border-green-200';
       case 'moderate':
         return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 'severe':
+      case 'high':
         return 'bg-red-100 text-red-800 border-red-200';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-200';
@@ -261,6 +306,30 @@ export default function PatientAIAssistant() {
           Get personalized health insights and symptom analysis powered by AI
         </p>
       </div>
+
+      {/* Rate Limit Info */}
+      {!loadingRateLimit && rateLimitInfo && (
+        <Card className="border-blue-200 bg-blue-50 dark:bg-blue-900/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center">
+              <BarChart3 className="mr-2 h-4 w-4" />
+              Daily AI Usage
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Used: {rateLimitInfo.used} / {rateLimitInfo.dailyLimit}</span>
+                <span>{rateLimitInfo.remaining} remaining</span>
+              </div>
+              <Progress value={rateLimitInfo.percentage} className="h-2" />
+              <p className="text-xs text-muted-foreground">
+                Resets at: {new Date(rateLimitInfo.resetTime).toLocaleTimeString()}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="chat" className="space-y-6">
         <TabsList className="grid w-full grid-cols-3">
@@ -286,34 +355,25 @@ export default function PatientAIAssistant() {
                 <CardContent className="space-y-4">
                   {/* Chat Messages */}
                   <div className="h-96 overflow-y-auto border rounded-lg p-4 space-y-4">
-                    {chatMessages.length === 0 ? (
-                      <div className="text-center py-12">
-                        <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                        <p className="text-muted-foreground">
-                          Hi! I'm your AI health assistant. Ask me about symptoms, health concerns, or wellness tips.
-                        </p>
-                      </div>
-                    ) : (
-                      chatMessages.map((message) => (
+                    {chatMessages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                      >
                         <div
-                          key={message.id}
-                          className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                          className={`max-w-[80%] p-3 rounded-lg ${
+                            message.type === 'user'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-100 dark:bg-gray-800'
+                          }`}
                         >
-                          <div
-                            className={`max-w-[80%] p-3 rounded-lg ${
-                              message.type === 'user'
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gray-100 dark:bg-gray-800'
-                            }`}
-                          >
-                            <p className="text-sm">{message.content}</p>
-                            <p className="text-xs opacity-70 mt-1">
-                              {message.timestamp.toLocaleTimeString()}
-                            </p>
-                          </div>
+                          <div className="text-sm whitespace-pre-wrap">{message.content}</div>
+                          <p className="text-xs opacity-70 mt-1">
+                            {message.timestamp.toLocaleTimeString()}
+                          </p>
                         </div>
-                      ))
-                    )}
+                      </div>
+                    ))}
                     
                     {isTyping && (
                       <div className="flex justify-start">
@@ -336,11 +396,24 @@ export default function PatientAIAssistant() {
                       placeholder="Ask about your health concerns..."
                       onKeyPress={(e) => e.key === 'Enter' && sendChatMessage()}
                       className="flex-1"
+                      disabled={rateLimitInfo && rateLimitInfo.remaining <= 0}
                     />
-                    <Button onClick={sendChatMessage} disabled={!currentMessage.trim() || isTyping}>
+                    <Button 
+                      onClick={sendChatMessage} 
+                      disabled={!currentMessage.trim() || isTyping || (rateLimitInfo && rateLimitInfo.remaining <= 0)}
+                    >
                       <Send className="h-4 w-4" />
                     </Button>
                   </div>
+                  
+                  {rateLimitInfo && rateLimitInfo.remaining <= 0 && (
+                    <Alert>
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertDescription>
+                        Daily AI request limit reached. Resets at midnight.
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -355,19 +428,35 @@ export default function PatientAIAssistant() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("Tell me about heart health tips")}
+                  >
                     <Heart className="mr-2 h-4 w-4" />
                     Heart Health Tips
                   </Button>
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("What are good exercise guidelines?")}
+                  >
                     <Activity className="mr-2 h-4 w-4" />
                     Exercise Guidelines
                   </Button>
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("How much water should I drink daily?")}
+                  >
                     <Droplets className="mr-2 h-4 w-4" />
-                    Hydration Reminders
+                    Hydration Tips
                   </Button>
-                  <Button variant="outline" className="w-full justify-start text-sm">
+                  <Button 
+                    variant="outline" 
+                    className="w-full justify-start text-sm"
+                    onClick={() => setCurrentMessage("What are good sleep hygiene practices?")}
+                  >
                     <Clock className="mr-2 h-4 w-4" />
                     Sleep Hygiene
                   </Button>
@@ -380,7 +469,7 @@ export default function PatientAIAssistant() {
                 </CardHeader>
                 <CardContent>
                   <Alert>
-                    <AlertTriangle className="h-4 w-4" />
+                    <Shield className="h-4 w-4" />
                     <AlertDescription className="text-xs">
                       This AI assistant provides general health information only. Always consult healthcare professionals for medical advice, diagnosis, or treatment.
                     </AlertDescription>
@@ -456,7 +545,7 @@ export default function PatientAIAssistant() {
 
                 <Button
                   onClick={analyzeSymptoms}
-                  disabled={analyzing || symptoms.length === 0}
+                  disabled={analyzing || symptoms.length === 0 || (rateLimitInfo && rateLimitInfo.remaining <= 0)}
                   className="w-full"
                 >
                   {analyzing ? (
@@ -471,6 +560,15 @@ export default function PatientAIAssistant() {
                     </>
                   )}
                 </Button>
+                
+                {rateLimitInfo && rateLimitInfo.remaining <= 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Daily AI request limit reached. Resets at midnight.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </CardContent>
             </Card>
 
@@ -483,58 +581,70 @@ export default function PatientAIAssistant() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {aiAnalysis && aiAnalysis.possibleCauses ? (
+                {aiAnalysis && aiAnalysis.primaryDiagnosis ? (
                   <div className="space-y-4">
-                    <div className="space-y-3">
-                      {aiAnalysis.possibleCauses.map((cause, index) => (
-                        <div key={index} className="p-3 border rounded-lg">
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="font-medium">{cause.condition}</h4>
-                            <div className="flex items-center space-x-2">
-                              <Badge className={getSeverityColor(cause.severity)}>
-                                {cause.severity}
-                              </Badge>
-                              <span className={`text-sm font-medium ${getProbabilityColor(cause.probability)}`}>
-                                {cause.probability}%
-                              </span>
-                            </div>
-                          </div>
-                          <p className="text-sm text-muted-foreground mb-2">{cause.description}</p>
-                          <div className="space-y-1">
-                            <p className="text-xs font-medium">Recommendations:</p>
-                            <ul className="text-xs space-y-1">
-                              {cause.recommendations.map((rec, idx) => (
-                                <li key={idx} className="flex items-start">
-                                  <CheckCircle className="mr-1 h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
-                                  {rec}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
+                    <div className="p-3 border rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="font-medium">{aiAnalysis.primaryDiagnosis.condition}</h4>
+                        <div className="flex items-center space-x-2">
+                          <Badge className={getSeverityColor(aiAnalysis.primaryDiagnosis.severity)}>
+                            {aiAnalysis.primaryDiagnosis.severity}
+                          </Badge>
+                          <span className={`text-sm font-medium ${getProbabilityColor(aiAnalysis.primaryDiagnosis.probability * 100)}`}>
+                            {Math.round(aiAnalysis.primaryDiagnosis.probability * 100)}%
+                          </span>
                         </div>
-                      ))}
-                    </div>
-
-                    <Alert className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20">
-                      <AlertTriangle className="h-4 w-4 text-amber-600" />
-                      <AlertDescription>
-                        <div className="space-y-2">
-                          <p className="font-medium text-amber-800 dark:text-amber-200">When to Seek Medical Care:</p>
-                          <ul className="text-sm text-amber-700 dark:text-amber-300 space-y-1">
-                            {aiAnalysis.whenToSeekCare.map((item, index) => (
-                              <li key={index} className="flex items-start">
-                                <span className="mr-2">•</span>
-                                {item}
+                      </div>
+                      <p className="text-sm text-muted-foreground mb-2">{aiAnalysis.primaryDiagnosis.reasoning}</p>
+                      
+                      {aiAnalysis.primaryDiagnosis.supportingEvidence && (
+                        <div className="space-y-1">
+                          <p className="text-xs font-medium">Supporting Evidence:</p>
+                          <ul className="text-xs space-y-1">
+                            {aiAnalysis.primaryDiagnosis.supportingEvidence.map((evidence, idx) => (
+                              <li key={idx} className="flex items-start">
+                                <CheckCircle className="mr-1 h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
+                                {evidence}
                               </li>
                             ))}
                           </ul>
                         </div>
-                      </AlertDescription>
-                    </Alert>
+                      )}
+                    </div>
+
+                    {aiAnalysis.recommendations && (
+                      <div className="space-y-2">
+                        <p className="text-sm font-medium">Recommendations:</p>
+                        <ul className="space-y-1">
+                          {aiAnalysis.recommendations.slice(0, 3).map((rec, index) => (
+                            <li key={index} className="text-sm flex items-start">
+                              <CheckCircle className="mr-2 h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
+                              {rec}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {aiAnalysis.patientContext && (
+                      <Alert className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20">
+                        <User className="h-4 w-4 text-blue-600" />
+                        <AlertDescription>
+                          <div className="space-y-1">
+                            <p className="font-medium text-blue-800 dark:text-blue-200">Patient Context:</p>
+                            <p className="text-sm text-blue-700 dark:text-blue-300">
+                              Age: {aiAnalysis.patientContext.age} | 
+                              Medical Records: {aiAnalysis.analysisMetadata?.medicalRecords || 0} | 
+                              Chronic Conditions: {aiAnalysis.patientContext.chronicConditions?.length || 0}
+                            </p>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
 
                     <div className="text-xs text-muted-foreground p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                       <p className="font-medium mb-1">⚠️ Important Disclaimer</p>
-                      <p>{aiAnalysis.disclaimer}</p>
+                      <p>This AI analysis is for informational purposes only and should not replace professional medical advice. Always consult with healthcare professionals for medical concerns.</p>
                     </div>
                   </div>
                 ) : (
@@ -566,18 +676,17 @@ export default function PatientAIAssistant() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Document Type</label>
-                  <Select value={documentType} onValueChange={setDocumentType}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="lab-results">Lab Results</SelectItem>
-                      <SelectItem value="imaging">Medical Imaging</SelectItem>
-                      <SelectItem value="prescription">Prescription</SelectItem>
-                      <SelectItem value="consultation">Consultation Notes</SelectItem>
-                      <SelectItem value="general">General Medical Document</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <select
+                    value={documentType}
+                    onChange={(e) => setDocumentType(e.target.value)}
+                    className="w-full p-2 border rounded-md"
+                  >
+                    <option value="lab-results">Lab Results</option>
+                    <option value="imaging">Medical Imaging</option>
+                    <option value="prescription">Prescription</option>
+                    <option value="consultation">Consultation Notes</option>
+                    <option value="general">General Medical Document</option>
+                  </select>
                 </div>
 
                 <div className="space-y-2">
@@ -593,7 +702,7 @@ export default function PatientAIAssistant() {
 
                 <Button
                   onClick={analyzeDocument}
-                  disabled={analyzing || !documentText.trim()}
+                  disabled={analyzing || !documentText.trim() || (rateLimitInfo && rateLimitInfo.remaining <= 0)}
                   className="w-full"
                 >
                   {analyzing ? (
@@ -608,6 +717,15 @@ export default function PatientAIAssistant() {
                     </>
                   )}
                 </Button>
+                
+                {rateLimitInfo && rateLimitInfo.remaining <= 0 && (
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Daily AI request limit reached. Resets at midnight.
+                    </AlertDescription>
+                  </Alert>
+                )}
               </CardContent>
             </Card>
 
