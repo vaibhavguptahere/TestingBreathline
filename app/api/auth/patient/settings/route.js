@@ -10,14 +10,15 @@ export async function GET(request) {
     }
 
     const { user } = auth;
+    if (user.role !== 'patient') {
+      return Response.json({ error: 'Access denied' }, { status: 403 });
+    }
 
     return Response.json({
-      profile: user.profile,
-      email: user.email,
-      role: user.role,
+      settings: user.profile.settings,
     });
   } catch (error) {
-    console.error('Get profile error:', error);
+    console.error('Get patient settings error:', error);
     return Response.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -35,14 +36,6 @@ export async function PUT(request) {
     }
 
     const body = await request.json();
-    const {
-      firstName,
-      lastName,
-      phone,
-      dateOfBirth,
-      address,
-      emergencyContact,
-    } = body;
 
     await connectDB();
 
@@ -50,23 +43,21 @@ export async function PUT(request) {
       user._id,
       {
         $set: {
-          'profile.firstName': firstName,
-          'profile.lastName': lastName,
-          'profile.phone': phone,
-          'profile.dateOfBirth': dateOfBirth,
-          'profile.address': address,
-          'profile.emergencyContact': emergencyContact,
+          'profile.settings': {
+            ...user.profile.settings,
+            ...body,
+          },
         },
       },
       { new: true }
     );
 
     return Response.json({
-      message: 'Profile updated successfully',
-      profile: updatedUser.profile,
+      message: 'Settings updated successfully',
+      settings: updatedUser.profile.settings,
     });
   } catch (error) {
-    console.error('Update profile error:', error);
+    console.error('Update patient settings error:', error);
     return Response.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

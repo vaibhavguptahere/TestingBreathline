@@ -72,8 +72,8 @@ export function Sidebar() {
             badge: 'AI',
           },
           {
-            title: 'Profile',
-            href: '/dashboard/patient/profile',
+            title: 'Settings',
+            href: '/dashboard/patient/settings',
             icon: Settings,
           },
         ];
@@ -104,8 +104,8 @@ export function Sidebar() {
             badge: 'AI',
           },
           {
-            title: 'Profile',
-            href: '/dashboard/doctor/profile',
+            title: 'Settings',
+            href: '/dashboard/doctor/settings',
             icon: Settings,
           },
         ];
@@ -129,8 +129,8 @@ export function Sidebar() {
             icon: History,
           },
           {
-            title: 'Profile',
-            href: '/dashboard/emergency/profile',
+            title: 'Settings',
+            href: '/dashboard/emergency/settings',
             icon: Settings,
           },
         ];
