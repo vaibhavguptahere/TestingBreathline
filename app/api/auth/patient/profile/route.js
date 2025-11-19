@@ -1,4 +1,6 @@
 import { authenticateToken } from '@/middleware/auth';
+import connectDB from '@/lib/mongodb';
+import User from '@/models/User';
 
 export async function GET(request) {
   try {
