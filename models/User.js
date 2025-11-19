@@ -31,6 +31,10 @@ const userSchema = new mongoose.Schema({
     licenseNumber: String,
     specialization: String,
     hospital: String,
+    hospitalId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Hospital',
+    },
     bio: String,
     verified: { type: Boolean, default: false },
     // Emergency responder specific fields
