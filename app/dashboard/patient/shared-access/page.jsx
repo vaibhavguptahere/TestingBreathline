@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import HospitalDoctorSelector from '@/components/hospital-doctor-selector';
 import {
   Users,
   UserPlus,
@@ -24,7 +26,8 @@ import {
   AlertTriangle,
   Building,
   Mail,
-  FileText
+  FileText,
+  Building2
 } from 'lucide-react';
 import { toast } from 'sonner';
 
