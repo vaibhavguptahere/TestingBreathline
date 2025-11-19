@@ -17,6 +17,7 @@ export async function POST(request) {
       licenseNumber,
       specialization,
       hospital,
+      hospitalId,
       badgeNumber,
       department,
     } = body;
