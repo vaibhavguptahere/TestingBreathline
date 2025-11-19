@@ -45,6 +45,9 @@ export async function POST(request) {
       profile.licenseNumber = licenseNumber;
       profile.specialization = specialization;
       profile.hospital = hospital;
+      if (hospitalId) {
+        profile.hospitalId = hospitalId;
+      }
       profile.verified = false; // Doctors need verification
     } else if (role === 'emergency') {
       profile.badgeNumber = badgeNumber;
