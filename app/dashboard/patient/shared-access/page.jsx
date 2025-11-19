@@ -37,6 +37,7 @@ export default function SharedAccess() {
   const [accessRequests, setAccessRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showShareDialog, setShowShareDialog] = useState(false);
+  const [shareDialogTab, setShareDialogTab] = useState('hospital');
   const [searchTerm, setSearchTerm] = useState('');
   const [sharingAccess, setSharingAccess] = useState(false);
 
