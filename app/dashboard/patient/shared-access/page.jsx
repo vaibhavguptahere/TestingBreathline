@@ -226,68 +226,104 @@ export default function SharedAccess() {
               Share Access
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="sm:max-w-[500px] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Share Medical Records Access</DialogTitle>
               <DialogDescription>
-                Grant a doctor access to your medical records
+                Choose a method to grant a doctor access to your medical records
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleShareAccess} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="doctorEmail">Doctor's Email</Label>
-                <Input
-                  id="doctorEmail"
-                  type="email"
-                  value={shareForm.doctorEmail}
-                  onChange={(e) => setShareForm({ ...shareForm, doctorEmail: e.target.value })}
-                  placeholder="doctor@hospital.com"
-                  required
+
+            <Tabs value={shareDialogTab} onValueChange={setShareDialogTab}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="hospital" className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4" />
+                  <span className="hidden sm:inline">Hospital</span>
+                </TabsTrigger>
+                <TabsTrigger value="email" className="flex items-center gap-2">
+                  <Mail className="h-4 w-4" />
+                  <span className="hidden sm:inline">Email</span>
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="hospital" className="space-y-4">
+                <HospitalDoctorSelector
+                  onDoctorSelected={() => {
+                    setShowShareDialog(false);
+                    fetchSharedAccess();
+                  }}
+                  onCancel={() => setShowShareDialog(false)}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="accessLevel">Access Level</Label>
-                <Select
-                  value={shareForm.accessLevel}
-                  onValueChange={(value) => setShareForm({ ...shareForm, accessLevel: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="read">Read Only</SelectItem>
-                    <SelectItem value="write">Read & Write</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="expiresIn">Access Duration</Label>
-                <Select
-                  value={shareForm.expiresIn}
-                  onValueChange={(value) => setShareForm({ ...shareForm, expiresIn: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="7d">7 Days</SelectItem>
-                    <SelectItem value="30d">30 Days</SelectItem>
-                    <SelectItem value="90d">90 Days</SelectItem>
-                    <SelectItem value="1y">1 Year</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button type="submit" className="w-full" disabled={sharingAccess}>
-                {sharingAccess ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Sharing Access...
-                  </>
-                ) : (
-                  'Share Access'
-                )}
-              </Button>
-            </form>
+              </TabsContent>
+
+              <TabsContent value="email">
+                <form onSubmit={handleShareAccess} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="doctorEmail">Doctor's Email</Label>
+                    <Input
+                      id="doctorEmail"
+                      type="email"
+                      value={shareForm.doctorEmail}
+                      onChange={(e) => setShareForm({ ...shareForm, doctorEmail: e.target.value })}
+                      placeholder="doctor@hospital.com"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="accessLevel">Access Level</Label>
+                    <Select
+                      value={shareForm.accessLevel}
+                      onValueChange={(value) => setShareForm({ ...shareForm, accessLevel: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="read">Read Only</SelectItem>
+                        <SelectItem value="write">Read & Write</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="expiresIn">Access Duration</Label>
+                    <Select
+                      value={shareForm.expiresIn}
+                      onValueChange={(value) => setShareForm({ ...shareForm, expiresIn: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="7d">7 Days</SelectItem>
+                        <SelectItem value="30d">30 Days</SelectItem>
+                        <SelectItem value="90d">90 Days</SelectItem>
+                        <SelectItem value="1y">1 Year</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex gap-2 pt-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowShareDialog(false)}
+                      className="flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" className="flex-1" disabled={sharingAccess}>
+                      {sharingAccess ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Sharing Access...
+                        </>
+                      ) : (
+                        'Share Access'
+                      )}
+                    </Button>
+                  </div>
+                </form>
+              </TabsContent>
+            </Tabs>
           </DialogContent>
         </Dialog>
       </div>
