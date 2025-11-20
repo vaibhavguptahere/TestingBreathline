@@ -37,6 +37,25 @@ const userSchema = new mongoose.Schema({
     },
     bio: String,
     verified: { type: Boolean, default: false },
+    verificationStatus: {
+      type: String,
+      enum: [
+        'not_submitted',
+        'submitted',
+        'under_review',
+        'need_resubmission',
+        'verified',
+        'rejected',
+        'suspended',
+      ],
+      default: 'not_submitted',
+    },
+    trustPatientsList: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
     // Emergency responder specific fields
     badgeNumber: String,
     department: String,
