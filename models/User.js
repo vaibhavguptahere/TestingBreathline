@@ -67,6 +67,8 @@ const userSchema = new mongoose.Schema({
       smsNotifications: { type: Boolean, default: false },
       emergencyAlerts: { type: Boolean, default: true },
     },
+    // Admin flag
+    isAdmin: { type: Boolean, default: false },
   },
   isActive: {
     type: Boolean,
