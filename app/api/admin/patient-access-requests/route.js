@@ -10,13 +10,7 @@ async function checkAdminAccess(auth) {
 
   const { user } = auth;
   if (user.role !== 'admin') {
-    return { error: 'Access denied', status: 403 };
-  }
-
-  await connectDB();
-  const adminUser = await User.findById(user._id);
-  if (!adminUser || !adminUser.profile?.isAdmin) {
-    return { error: 'Insufficient permissions', status: 403 };
+    return { error: 'Access denied: Admin role required', status: 403 };
   }
 
   return { success: true };
