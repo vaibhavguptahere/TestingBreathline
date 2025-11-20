@@ -61,6 +61,11 @@ export function Sidebar() {
             icon: Share2,
           },
           {
+            title: 'Access Requests',
+            href: '/dashboard/patient/access-requests',
+            icon: UserCheck,
+          },
+          {
             title: 'Emergency QR',
             href: '/dashboard/patient/emergency-qr',
             icon: QrCode,
