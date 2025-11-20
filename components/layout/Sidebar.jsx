@@ -140,6 +140,31 @@ export function Sidebar() {
           },
         ];
 
+      case 'admin':
+        return [
+          ...baseItems,
+          {
+            title: 'Doctor Verifications',
+            href: '/dashboard/admin',
+            icon: FileText,
+          },
+          {
+            title: 'Access Requests',
+            href: '/dashboard/admin',
+            icon: Users,
+          },
+          {
+            title: 'Audit Logs',
+            href: '/dashboard/admin',
+            icon: Activity,
+          },
+          {
+            title: 'Settings',
+            href: '/dashboard/admin/settings',
+            icon: Settings,
+          },
+        ];
+
       default:
         return baseItems;
     }
