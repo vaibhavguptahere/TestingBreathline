@@ -82,6 +82,11 @@ export function Sidebar() {
         return [
           ...baseItems,
           {
+            title: 'Identity Verification',
+            href: '/dashboard/doctor/verification',
+            icon: Shield,
+          },
+          {
             title: 'My Patients',
             href: '/dashboard/doctor/patients',
             icon: Users,
