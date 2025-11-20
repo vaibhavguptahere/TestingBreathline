@@ -214,6 +214,7 @@ export function Sidebar() {
             {user.role === 'doctor' && <Stethoscope className="h-4 w-4" />}
             {user.role === 'emergency' && <Siren className="h-4 w-4" />}
             {user.role === 'patient' && <Shield className="h-4 w-4" />}
+            {user.role === 'admin' && <Activity className="h-4 w-4" />}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">
