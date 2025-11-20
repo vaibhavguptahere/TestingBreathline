@@ -13,7 +13,7 @@ const userSchema = new mongoose.Schema({
   },
   role: {
     type: String,
-    enum: ['patient', 'doctor', 'emergency'],
+    enum: ['patient', 'doctor', 'emergency', 'admin'],
     required: true,
   },
   profile: {
@@ -31,8 +31,31 @@ const userSchema = new mongoose.Schema({
     licenseNumber: String,
     specialization: String,
     hospital: String,
+    hospitalId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Hospital',
+    },
     bio: String,
     verified: { type: Boolean, default: false },
+    verificationStatus: {
+      type: String,
+      enum: [
+        'not_submitted',
+        'submitted',
+        'under_review',
+        'need_resubmission',
+        'verified',
+        'rejected',
+        'suspended',
+      ],
+      default: 'not_submitted',
+    },
+    trustPatientsList: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      },
+    ],
     // Emergency responder specific fields
     badgeNumber: String,
     department: String,
@@ -44,6 +67,8 @@ const userSchema = new mongoose.Schema({
       smsNotifications: { type: Boolean, default: false },
       emergencyAlerts: { type: Boolean, default: true },
     },
+    // Admin flag
+    isAdmin: { type: Boolean, default: false },
   },
   isActive: {
     type: Boolean,

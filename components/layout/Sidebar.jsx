@@ -61,6 +61,11 @@ export function Sidebar() {
             icon: Share2,
           },
           {
+            title: 'Access Requests',
+            href: '/dashboard/patient/access-requests',
+            icon: UserCheck,
+          },
+          {
             title: 'Emergency QR',
             href: '/dashboard/patient/emergency-qr',
             icon: QrCode,
@@ -81,6 +86,11 @@ export function Sidebar() {
       case 'doctor':
         return [
           ...baseItems,
+          {
+            title: 'Identity Verification',
+            href: '/dashboard/doctor/verification',
+            icon: Shield,
+          },
           {
             title: 'My Patients',
             href: '/dashboard/doctor/patients',
@@ -135,6 +145,31 @@ export function Sidebar() {
           },
         ];
 
+      case 'admin':
+        return [
+          ...baseItems,
+          {
+            title: 'Doctor Verifications',
+            href: '/dashboard/admin',
+            icon: FileText,
+          },
+          {
+            title: 'Access Requests',
+            href: '/dashboard/admin',
+            icon: Users,
+          },
+          {
+            title: 'Audit Logs',
+            href: '/dashboard/admin',
+            icon: Activity,
+          },
+          {
+            title: 'Settings',
+            href: '/dashboard/admin/settings',
+            icon: Settings,
+          },
+        ];
+
       default:
         return baseItems;
     }
@@ -184,6 +219,7 @@ export function Sidebar() {
             {user.role === 'doctor' && <Stethoscope className="h-4 w-4" />}
             {user.role === 'emergency' && <Siren className="h-4 w-4" />}
             {user.role === 'patient' && <Shield className="h-4 w-4" />}
+            {user.role === 'admin' && <Activity className="h-4 w-4" />}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">
